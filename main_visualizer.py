@@ -3,7 +3,13 @@ import time
 import math
 import numpy as np
 import sounddevice as sd
-print(sd.query_devices())
+
+def find_blackhole_device():
+    for i, dev in enumerate(sd.query_devices()):
+        if "BlackHole" in dev["name"] and dev["max_input_channels"] > 0:
+            return i
+    return None
+
 
 
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -139,7 +145,7 @@ class AudioVisualizer(QWidget):
         self.color_energy = 0.0     # current color intensity
         self.color_velocity = 0.0   # momentum
         self.color_damping = 0.88   # how quickly it settles
-        self.color_spring = 0.12    # how strongly it pulls back
+        self.color_spring = 0.10    # how strongly it pulls back
 
         # Audio stream
         self.stream = sd.InputStream(
@@ -151,6 +157,19 @@ class AudioVisualizer(QWidget):
         )
         self.stream.start()
 
+        device = find_blackhole_device()
+        if device is None:
+            print("⚠️ BlackHole not detected. Please install BlackHole 2ch.")
+        else:
+            self.stream = sd.InputStream(
+                device=device,
+                channels=2,
+                callback=self.audio_callback,
+                blocksize=512
+            )
+
+        # Visual intensity (user-controlled)
+        self.visual_intensity = 1.0  # 0.2 → 2.0 recommended
 
         # Render loop
         self.timer = QTimer(self)
@@ -158,6 +177,17 @@ class AudioVisualizer(QWidget):
         self.timer.start(16)
 
         self.show()
+
+        from PyQt6.QtWidgets import QSlider
+
+        self.intensity_slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.intensity_slider.setRange(20, 200)   # maps to 0.2 → 2.0
+        self.intensity_slider.setValue(100)
+        self.intensity_slider.setGeometry(20, 20, 200, 20)
+
+        self.intensity_slider.valueChanged.connect(
+            lambda v: setattr(self, "visual_intensity", v / 100.0)
+        )
 
     # =========================
     # Audio callback (REAL TIME)
@@ -272,12 +302,16 @@ class AudioVisualizer(QWidget):
         w, h = self.width(), self.height()
         center = QPointF(w / 2, h / 2)
 
+        intensity = self.visual_intensity
+
+
         # ===============================
         # Continuous rotation (360° loop)
         # ===============================
         self.rotation += 0.008 + self.smooth_bass * 0.04
         if self.rotation > 2 * math.pi:
             self.rotation -= 2 * math.pi
+
         # ===============================
         # Smooth color spring (bass-driven)
         # ===============================
@@ -329,9 +363,10 @@ class AudioVisualizer(QWidget):
         base_radius = min(w, h) * 0.22
         target_radius = (
             base_radius
-            + self.bass_breath * 220     # slower, intentional
-            + self.vocal_breath * 40     # gentle lift
+            + self.bass_breath * 220 * intensity
+            + self.vocal_breath * 40 * intensity
         )
+
 
         force = (target_radius - self.orb_radius) * self.spring_strength
         self.orb_velocity += force
@@ -348,7 +383,7 @@ class AudioVisualizer(QWidget):
         # ===============================
         # Layer 1: Outer halo
         # ===============================
-        halo_radius = radius * 1.6
+        halo_radius = radius * (1.5 + 0.1 * intensity)
         halo_base = QColor(
             orb_core.red(),
             orb_core.green(),
@@ -373,7 +408,7 @@ class AudioVisualizer(QWidget):
         # ===============================
         # Layer 2: Mid bloom
         # ===============================
-        mid_radius = radius * 1.28
+        mid_radius  = radius * (1.2 + 0.08 * intensity)
         mid_base = QColor(
             orb_core.red(),
             orb_core.green(),
@@ -488,10 +523,10 @@ class AudioVisualizer(QWidget):
         # ===============================
         # Frequency shoreline waves
         # ===============================
-        slices = 96
+        slices = 84
         fft = self.smooth_fft
         fft_len = len(fft)
-        max_height = 65
+        max_height = 65 * intensity
 
         for i in range(slices):
             a1 = (i / slices) * 2 * math.pi + self.rotation
@@ -510,7 +545,7 @@ class AudioVisualizer(QWidget):
                 if d < 40:
                     ripple_boost += (1.0 - d / 40.0) * ripple["strength"]
 
-            h = base_h + ripple_boost * 35
+            h = base_h + ripple_boost * 35 * (0.6 + 0.4 * intensity)
             r1 = radius + h
             r2 = radius + h
 
