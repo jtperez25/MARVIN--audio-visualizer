@@ -4,6 +4,14 @@ import math
 import numpy as np
 import sounddevice as sd
 
+from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtGui import QPainter, QColor, QRadialGradient, QPen
+from PyQt6.QtCore import Qt, QTimer, QPointF
+
+
+# =========================
+# HELPERS
+# =========================
 def find_blackhole_device():
     for i, dev in enumerate(sd.query_devices()):
         if "BlackHole" in dev["name"] and dev["max_input_channels"] > 0:
@@ -11,564 +19,246 @@ def find_blackhole_device():
     return None
 
 
+def lerp(a, b, t):
+    return a + (b - a) * t
 
-from PyQt6.QtWidgets import QApplication, QWidget
-from PyQt6.QtGui import QPainter, QColor, QRadialGradient, QPen
-from PyQt6.QtCore import Qt, QTimer, QPointF
-
-
-# =========================
-# Color mapping
-# =========================
-def color_for_band(i, total, intensity):
-    t = i / total
-
-    # Purple → Magenta → Cyan
-    if t < 0.33:
-        r = int(150 + (255 - 150) * (t / 0.33))
-        g = int(50 + (80 - 50) * (t / 0.33))
-        b = 255
-    elif t < 0.66:
-        tt = (t - 0.33) / 0.33
-        r = int(255 * (1 - tt))
-        g = int(80 + (220 - 80) * tt)
-        b = 255
-    else:
-        tt = (t - 0.66) / 0.34
-        r = int(255 * tt)
-        g = int(220 + (255 - 220) * tt)
-        b = 255
-
-    alpha = int(120 + intensity * 135)
-    return QColor(r, g, b, alpha)
 
 def lerp_color(c1, c2, t):
     return QColor(
-        int(c1.red()   + (c2.red()   - c1.red())   * t),
-        int(c1.green() + (c2.green() - c1.green()) * t),
-        int(c1.blue()  + (c2.blue()  - c1.blue())  * t),
-        255
+        int(lerp(c1.red(),   c2.red(),   t)),
+        int(lerp(c1.green(), c2.green(), t)),
+        int(lerp(c1.blue(),  c2.blue(),  t)),
+        int(lerp(c1.alpha(), c2.alpha(), t))
     )
 
-BASS_RIPPLE_COLOR = QColor(150, 70, 255)     # deep purple
-SNARE_RIPPLE_COLOR = QColor(255, 235, 160)   # butter yellow
-
-def ripple_color(base_color, ripple_dist, ripple_radius, strength):
-    if strength <= 0.0:
-        return base_color
-
-    # How close is this layer to the ripple wave?
-    d = abs(ripple_dist - ripple_radius)
-    width = 40.0  # ripple thickness
-
-    if d > width:
-        return base_color
-
-    t = 1.0 - (d / width)
-    t *= strength
-
-    # Blend toward white-magenta glow
-    r = int(base_color.red()   + (255 - base_color.red())   * t)
-    g = int(base_color.green() + (200 - base_color.green()) * t)
-    b = int(base_color.blue()  + (255 - base_color.blue())  * t)
-
-    return QColor(r, g, b, base_color.alpha())
 
 # =========================
-# Main visualizer
+# VISUALIZER
 # =========================
 class AudioVisualizer(QWidget):
     def __init__(self):
         super().__init__()
 
         self.setWindowTitle("Audio Sphere Visualizer")
-        self.resize(800, 600)
+        self.resize(900, 700)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        # Audio state
-        self.smooth_volume = 0.0
-        self.smooth_bass = 0.0
-        self.smooth_fft = np.zeros(128)
+        # FFT
+        self.fft_smooth = np.zeros(128)
 
-        # ===============================
-        # Sustained color breathing
-        # ===============================
-        self.sustain_energy = 0.0
-        self.sustain_attack = 0.08
-        self.sustain_release = 0.02
+        # Levels
+        self.bass_level = 0.0
+        self.bass_avg = 0.0
 
-        # Beat detection
-        self.bass_history = np.zeros(40)
-        self.last_beat_time = 0.0
-        self.beat_cooldown = 0.18  # seconds
+        self.vocal_level = 0.0
+        self.vocal_avg = 0.0
+        self.vocal_confidence = 0.0
 
-        # ===============================
-        # Beat-driven color breathing
-        # ===============================
-        self.breath_energy = 0.0
-        self.breath_decay = 0.994
+        # Pitch
+        self.pitch_raw = 0.0
+        self.pitch_smooth = 0.0
+        self.pitch_ultra = 0.0
 
-        # ===============================
-        # Breath systems
-        # ===============================
-        self.bass_breath = 0.0
-        self.vocal_breath = 0.0
+        # Orb physics
+        self.orb_radius = 0.0
+        self.orb_velocity = 0.0
+        self.orb_target = 0.0
 
-        self.bass_breath_decay = 0.88
-        self.vocal_breath_decay = 0.94
+        self.orb_smooth = 0.065   # faster breath
+        self.orb_damping = 0.92
 
-        # Ripple
-        self.ripple_radius = 0.0
-        self.ripple_strength = 0.0
-        # Beat color ripple
-        self.color_ripple_radius = 0.0
-        self.color_ripple_strength = 0.0
+        # Beat
+        self.beat_energy = 0.0
+        self.last_beat = 0.0
+        self.beat_cooldown = 0.18
 
-        # =========================
-        # Ripple system (bass + snare)
-        # =========================
-        self.ripples = []
+        # Color
+        self.color_phase = 0.0
 
         # Rotation
         self.rotation = 0.0
 
-        # === Spring physics for orb ===
-        self.orb_radius = 0.0
-        self.orb_velocity = 0.0
+        device = find_blackhole_device()
+        if device is None:
+            print("⚠️ BlackHole not found")
+            sys.exit(1)
 
-        self.spring_strength = 0.12   # stiffness
-        self.spring_damping = 0.88    # friction
-
-        # ===============================
-        # Color spring system (smooth kicks)
-        # ===============================
-        self.color_energy = 0.0     # current color intensity
-        self.color_velocity = 0.0   # momentum
-        self.color_damping = 0.88   # how quickly it settles
-        self.color_spring = 0.10    # how strongly it pulls back
-
-        # Audio stream
         self.stream = sd.InputStream(
-            device=0,              # BlackHole 2ch
-            channels=2,            # MUST be 2 for BlackHole
+            device=device,
+            channels=2,
             samplerate=44100,
-            blocksize=256,
+            blocksize=512,
             callback=self.audio_callback
         )
         self.stream.start()
 
-        device = find_blackhole_device()
-        if device is None:
-            print("⚠️ BlackHole not detected. Please install BlackHole 2ch.")
-        else:
-            self.stream = sd.InputStream(
-                device=device,
-                channels=2,
-                callback=self.audio_callback,
-                blocksize=512
-            )
-
-        # Visual intensity (user-controlled)
-        self.visual_intensity = 1.0  # 0.2 → 2.0 recommended
-
-        # Render loop
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update)
         self.timer.start(16)
 
         self.show()
 
-        from PyQt6.QtWidgets import QSlider
-
-        self.intensity_slider = QSlider(Qt.Orientation.Horizontal, self)
-        self.intensity_slider.setRange(20, 200)   # maps to 0.2 → 2.0
-        self.intensity_slider.setValue(100)
-        self.intensity_slider.setGeometry(20, 20, 200, 20)
-
-        self.intensity_slider.valueChanged.connect(
-            lambda v: setattr(self, "visual_intensity", v / 100.0)
-        )
-
     # =========================
-    # Audio callback (REAL TIME)
+    # AUDIO CALLBACK
     # =========================
     def audio_callback(self, indata, frames, time_info, status):
         if status:
             return
 
-        samples = np.mean(indata, axis=1)  # downmix stereo → mono
-
+        samples = np.mean(indata, axis=1)
         fft = np.abs(np.fft.rfft(samples))[:128]
         fft /= np.max(fft) + 1e-6
 
-        # Frequency bands
-        raw_bass = np.mean(fft[1:10])          # kick / sub
-        raw_vocals = np.mean(fft[20:60])       # vocals / leads
+        self.fft_smooth = self.fft_smooth * 0.88 + fft * 0.12
 
-
-        # Energy
-        raw_volume = np.linalg.norm(samples)
-        raw_bass = np.mean(fft[1:10])
-
-        # Fast smoothing (low latency)
-        self.smooth_volume = self.smooth_volume * 0.75 + raw_volume * 0.25
-        # Track sustained sound energy (pads, vocals, bass holds)
-        target = min(self.smooth_volume * 1.2, 1.0)
-
-        if target > self.sustain_energy:
-            self.sustain_energy += (target - self.sustain_energy) * self.sustain_attack
-        else:
-            self.sustain_energy += (target - self.sustain_energy) * self.sustain_release
-
-        self.smooth_bass = self.smooth_bass * 0.75 + raw_bass * 0.25
-        self.smooth_fft = self.smooth_fft * 0.85 + fft * 0.15
-
-        # Beat detection
-        self.bass_history = np.roll(self.bass_history, -1)
-        self.bass_history[-1] = raw_bass
-        avg_bass = np.mean(self.bass_history)
+        # -------------------------
+        # BEAT (low percussion)
+        # -------------------------
+        bass = np.mean(fft[2:12])
+        self.bass_avg = self.bass_avg * 0.98 + bass * 0.02
+        self.bass_level = max(0.0, bass - self.bass_avg * 1.25)
 
         now = time.time()
+        if bass > self.bass_avg * 1.4 and now - self.last_beat > self.beat_cooldown:
+            self.last_beat = now
+            self.beat_energy = min(self.beat_energy + bass, 1.0)
 
-        # Bass breath (triggered, heavier)
-        if raw_bass > np.mean(self.bass_history) * 1.25:
-            self.bass_breath = min(self.bass_breath + raw_bass * 0.6, 1.0)
+        # -------------------------
+        # STRICT VOCAL ISOLATION
+        # -------------------------
+        vocal_band = fft[28:52]   # human formants
+        vocal_energy = np.mean(vocal_band)
 
-        # Vocal breath (continuous, smooth)
-        self.vocal_breath += raw_vocals * 0.04
-        self.vocal_breath = min(self.vocal_breath, 1.0)
+        self.vocal_avg = self.vocal_avg * 0.985 + vocal_energy * 0.015
+        raw_vocal = max(0.0, vocal_energy - self.vocal_avg * 1.2)
 
+        # Pitch detection (centroid)
+        idx = np.argmax(vocal_band)
+        self.pitch_raw = idx / max(1, len(vocal_band))
 
-        # =========================
-        # Snare / transient (short ripple)
-        # =========================
-        high_energy = np.mean(fft[25:60])
-        high_avg = np.mean(self.smooth_fft[25:60]) + 1e-6
+        # Pitch stability gate
+        pitch_delta = abs(self.pitch_raw - self.pitch_smooth)
+        pitch_stable = 1.0 if pitch_delta < 0.03 else 0.0
 
-        # === Snare energy (mid frequencies) ===
-        snare_energy = np.mean(fft[20:45])
-        # === Snare trigger (fast transient) ===
-        if snare_energy > np.mean(self.smooth_fft[20:45]) * 1.6:
-            self.trigger_snare()
+        # Harmonic confidence
+        harmonic = np.max(vocal_band)
+        noise = np.mean(fft[0:18]) + np.mean(fft[60:90])
+        harmonic_ratio = harmonic / (noise + 1e-6)
+        harmonic_gate = np.clip((harmonic_ratio - 1.5) * 1.1, 0.0, 1.0)
 
-        if high_energy > high_avg * 1.8:
-            self.ripples.append({
-                "radius": self.radius if hasattr(self, "radius") else 0,
-                "strength": 0.7,
-                "speed": 9.0,
-                "decay": 0.90,
-                "color": QColor(200, 220, 255)  # sharp white-blue
-            })
-
-
-    def trigger_beat(self, now):
-        strength = min(self.smooth_bass * 1.6, 1.0)
-
-        # Visual ripple (unchanged)
-        self.ripples.append({
-            "radius": self.orb_radius * 0.6,
-            "strength": strength,
-            "speed": 8,
-            "decay": 0.94,
-            "color": BASS_RIPPLE_COLOR
-        })
-
-        # Inject color breath (beat-locked)
-        self.breath_energy = min(1.0, self.breath_energy + strength * 0.6)
-
-    def trigger_snare(self):
-        self.ripples.append({
-            "radius": self.orb_radius * 0.85,
-            "strength": min(self.smooth_volume * 1.2, 1.0),
-            "speed": 14,          # fast
-            "decay": 0.88,        # short-lived
-            "color": SNARE_RIPPLE_COLOR
-        })
+        self.vocal_confidence = raw_vocal * pitch_stable * harmonic_gate
+        self.vocal_level = lerp(self.vocal_level, self.vocal_confidence, 0.30)
 
     # =========================
-    # Rendering
+    # RENDER
     # =========================
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # ===============================
-        # Breath decay
-        # ===============================
-        self.bass_breath *= self.bass_breath_decay
-        self.vocal_breath *= self.vocal_breath_decay
-
-
         w, h = self.width(), self.height()
         center = QPointF(w / 2, h / 2)
 
-        intensity = self.visual_intensity
+        self.beat_energy *= 0.84
 
-
-        # ===============================
-        # Continuous rotation (360° loop)
-        # ===============================
-        self.rotation += 0.008 + self.smooth_bass * 0.04
-        if self.rotation > 2 * math.pi:
-            self.rotation -= 2 * math.pi
+        # Pitch smoothing
+        self.pitch_smooth = lerp(self.pitch_smooth, self.pitch_raw, 0.12)
+        self.pitch_ultra = lerp(self.pitch_ultra, self.pitch_smooth, 0.045)
 
         # ===============================
-        # Smooth color spring (bass-driven)
-        # ===============================
-        color_force = -self.color_energy * 0.08
-        self.color_velocity += color_force
-        self.color_velocity *= 0.88
-        self.color_energy += self.color_velocity
-        self.color_energy = max(0.0, min(self.color_energy, 1.0))
-
-
-        t = time.time()
-
-        # ===============================
-        # Beat-locked breathing
-        # ===============================
-        self.breath_energy *= self.breath_decay
-        breath = self.breath_energy
-
-        breath_strength = self.sustain_energy * 0.35
-
-
-        # ===============================
-        # Warm drifting orb color palette
-        # ===============================
-        deep_purple = QColor(140, 60, 255)
-        warm_orange = QColor(255, 150, 80)
-        butter_yellow = QColor(255, 235, 160)
-        cool_blue = QColor(120, 180, 255)
-
-        phase = t * 0.03 + self.vocal_breath * 1.2
-        s = (math.sin(phase) + 1) * 0.5
-
-        warm_mix = self.vocal_breath
-
-        base_color = lerp_color(deep_purple, warm_orange, s)
-        highlight_color = lerp_color(butter_yellow, cool_blue, s * 0.6)
-        orb_core = lerp_color(
-            base_color,
-            highlight_color,
-            warm_mix * 0.4 + breath * 0.35
-        )
-
-
-        bass_energy = self.bass_breath
-
-        # ===============================
-        # Spring-based orb motion
+        # ORB BREATHING (VOCALS ONLY)
         # ===============================
         base_radius = min(w, h) * 0.22
-        target_radius = (
-            base_radius
-            + self.bass_breath * 220 * intensity
-            + self.vocal_breath * 40 * intensity
+        pitch_energy = self.pitch_ultra ** 1.25
+
+        emotional_push = max(0.0, self.vocal_level - 0.04) ** 1.8
+
+        self.orb_target = (
+            base_radius +
+            pitch_energy * 140 +
+            self.vocal_level * 190 +
+            emotional_push * 260
         )
 
-
-        force = (target_radius - self.orb_radius) * self.spring_strength
-        self.orb_velocity += force
-        self.orb_velocity *= self.spring_damping
+        self.orb_velocity = lerp(
+            self.orb_velocity,
+            self.orb_target - self.orb_radius,
+            self.orb_smooth
+        )
+        self.orb_velocity *= self.orb_damping
         self.orb_radius += self.orb_velocity
 
         radius = self.orb_radius
+
+        # ===============================
+        # ORB COLOR (VOCAL EMOTION)
+        # ===============================
+        deep_purple = QColor(140, 60, 255, 220)
+        warm_orange = QColor(255, 150, 80, 220)
+        butter_yellow = QColor(255, 235, 160, 220)
+        cool_blue = QColor(120, 180, 255, 220)
+
+        self.color_phase += (
+            pitch_energy * 0.018 +
+            emotional_push * 0.025
+        )
+        self.color_phase %= 4.0
+
+        palette = [
+            deep_purple,
+            warm_orange,
+            butter_yellow,
+            cool_blue,
+            deep_purple
+        ]
+
+        i = int(self.color_phase)
+        t = self.color_phase - i
+        orb_color = lerp_color(palette[i], palette[i + 1], t)
+
         painter.setPen(Qt.PenStyle.NoPen)
-
-        # Smooth color energy (for gentle color transitions)
-        self.color_energy = 0.0
-        self.color_velocity = 0.0
-
-        # ===============================
-        # Layer 1: Outer halo
-        # ===============================
-        halo_radius = radius * (1.5 + 0.1 * intensity)
-        halo_base = QColor(
-            orb_core.red(),
-            orb_core.green(),
-            orb_core.blue(),
-            int(50 + bass_energy * 60)
-        )
-
-        halo_color = ripple_color(
-            halo_base,
-            halo_radius,
-            self.color_ripple_radius,
-            self.color_ripple_strength
-        )
-
-        halo = QRadialGradient(center, halo_radius)
-        halo.setColorAt(0.0, QColor(0, 0, 0, 0))
-        halo.setColorAt(0.6, halo_color)
-        halo.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.setBrush(halo)
-        painter.drawEllipse(center, halo_radius, halo_radius)
-
-        # ===============================
-        # Layer 2: Mid bloom
-        # ===============================
-        mid_radius  = radius * (1.2 + 0.08 * intensity)
-        mid_base = QColor(
-            orb_core.red(),
-            orb_core.green(),
-            orb_core.blue(),
-            int(90 + bass_energy * 70)
-        )
-
-        mid_color = ripple_color(
-            mid_base,
-            mid_radius,
-            self.color_ripple_radius,
-            self.color_ripple_strength
-        )
-
-        mid = QRadialGradient(center, mid_radius)
-        mid.setColorAt(0.0, mid_color)
-        mid.setColorAt(0.75, QColor(
-            orb_core.red(),
-            orb_core.green(),
-            orb_core.blue(),
-            80
-        ))
-        mid.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.setBrush(mid)
-        painter.drawEllipse(center, mid_radius, mid_radius)
-
-        # ===============================
-        # Layer 3: Inner glow
-        # ===============================
-        inner_base = QColor(
-            orb_core.red(),
-            orb_core.green(),
-            orb_core.blue(),
-            int(140 + bass_energy * 60)
-        )
-
-        inner_color = ripple_color(
-            inner_base,
-            radius,
-            self.color_ripple_radius,
-            self.color_ripple_strength
-        )
-
-        inner = QRadialGradient(center, radius)
-        inner.setColorAt(0.0, inner_color)
-        inner.setColorAt(0.7, QColor(
-            orb_core.red(),
-            orb_core.green(),
-            orb_core.blue(),
-            120
-        ))
-        inner.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.setBrush(inner)
+        grad = QRadialGradient(center, radius)
+        grad.setColorAt(0.0, orb_color)
+        grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setBrush(grad)
         painter.drawEllipse(center, radius, radius)
 
         # ===============================
-        # Layer 4: Hot core
+        # FREQUENCY SPIKES (SUPPORT)
         # ===============================
-        core_radius = radius * 0.45
-        core_base = QColor(
-            int(orb_core.red()   + (255 - orb_core.red())   * 0.35),
-            int(orb_core.green() + (255 - orb_core.green()) * 0.35),
-            int(orb_core.blue()  + (255 - orb_core.blue())  * 0.35),
-            int(110 + bass_energy * 90)
-        )
-
-
-        core_color = ripple_color(
-            core_base,
-            core_radius,
-            self.color_ripple_radius,
-            self.color_ripple_strength
-        )
-
-        core = QRadialGradient(center, core_radius)
-        core.setColorAt(0.0, core_color)
-        core.setColorAt(1.0, QColor(0, 0, 0, 0))
-        painter.setBrush(core)
-        painter.drawEllipse(center, core_radius, core_radius)
-
-        # ===============================
-        # Beat Ripples (Bass + Snare)
-        # ===============================
-        new_ripples = []
-
-        for ripple in self.ripples:
-            if ripple["strength"] < 0.02:
-                continue
-
-            grad = QRadialGradient(center, ripple["radius"])
-            grad.setColorAt(0.0, QColor(0, 0, 0, 0))
-            grad.setColorAt(
-                0.7,
-                QColor(
-                    ripple["color"].red(),
-                    ripple["color"].green(),
-                    ripple["color"].blue(),
-                    int(220 * ripple["strength"])
-                )
-            )
-            grad.setColorAt(1.0, QColor(0, 0, 0, 0))
-
-            painter.setBrush(grad)
-            painter.drawEllipse(center, ripple["radius"], ripple["radius"])
-
-            ripple["radius"] += ripple["speed"]
-            ripple["strength"] *= ripple["decay"]
-            new_ripples.append(ripple)
-
-        self.ripples = new_ripples[-12:]
-
-        # ===============================
-        # Frequency shoreline waves
-        # ===============================
-        slices = 84
-        fft = self.smooth_fft
-        fft_len = len(fft)
-        max_height = 65 * intensity
+        fft = self.fft_smooth
+        slices = 96
+        self.rotation += 0.0015 + self.beat_energy * 0.015
 
         for i in range(slices):
-            a1 = (i / slices) * 2 * math.pi + self.rotation
-            a2 = ((i + 1) / slices) * 2 * math.pi + self.rotation
+            angle = (i / slices) * 2 * math.pi + self.rotation
+            band = fft[int(i / slices * len(fft))]
 
-            f0 = int((i / slices) ** 2 * fft_len)
-            f1 = int(((i + 1) / slices) ** 2 * fft_len)
-            f1 = max(f1, f0 + 1)
+            spike = (
+                band * 18 +
+                self.beat_energy * 55
+            )
 
-            energy = np.mean(fft[f0:f1])
-            base_h = (energy ** 0.6) * max_height
+            inner = radius + 8
+            outer = inner + spike
 
-            ripple_boost = 0.0
-            for ripple in self.ripples:
-                d = abs(ripple["radius"] - radius)
-                if d < 40:
-                    ripple_boost += (1.0 - d / 40.0) * ripple["strength"]
+            p1 = QPointF(
+                center.x() + math.cos(angle) * inner,
+                center.y() + math.sin(angle) * inner
+            )
+            p2 = QPointF(
+                center.x() + math.cos(angle) * outer,
+                center.y() + math.sin(angle) * outer
+            )
 
-            h = base_h + ripple_boost * 35 * (0.6 + 0.4 * intensity)
-            r1 = radius + h
-            r2 = radius + h
-
-            p1 = QPointF(center.x() + math.cos(a1) * r1, center.y() + math.sin(a1) * r1)
-            p2 = QPointF(center.x() + math.cos(a2) * r2, center.y() + math.sin(a2) * r2)
-
-            intensity = min(1.0, energy + ripple_boost)
-            pen = QPen(color_for_band(i, slices, intensity))
-            pen.setWidth(2 + int(energy * 2))
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-
+            pen = QPen(QColor(170, 190, 230, 110))
+            pen.setWidth(2)
             painter.setPen(pen)
             painter.drawLine(p1, p2)
 
-        self.color_ripple_radius += 9
-        self.color_ripple_strength *= 0.965
-
-
-
-
 
 # =========================
-# App entry
+# RUN
 # =========================
 app = QApplication(sys.argv)
 w = AudioVisualizer()
