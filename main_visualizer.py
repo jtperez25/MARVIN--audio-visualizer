@@ -201,7 +201,7 @@ class AudioVisualizer(QWidget):
             QColor(255, 235, 160, 220),  # butter yellow
             QColor(120, 180, 255, 220),  # cool blue
             QColor("#512800"),           # deep brown
-            QColor("#6DD900"),           # electric green
+            QColor("#5F8F4A"),           # moss green
             QColor("#B20000"),           # deep red
             QColor(140, 60, 255, 220)    # loop back
         ]
