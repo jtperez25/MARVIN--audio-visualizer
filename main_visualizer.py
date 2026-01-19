@@ -262,20 +262,33 @@ class AudioVisualizer(QWidget):
         # =========================
         deep_purple = QColor(140, 60, 255, 220)
         warm_orange = QColor(255, 150, 80, 220)
-        soft_green = QColor(120, 200, 140, 220)
-        deep_red = QColor(178, 0, 0, 220)
+        soft_green  = QColor(120, 200, 140, 220)
+        sky_blue    = QColor(135, 206, 235, 220)
+        brown_red   = QColor(160, 60, 45, 220)   # 🔥 brownish red
 
         self.color_phase += (
             pitch_energy * 0.028 +
             emotional * 0.035 +
             bloom * 0.05
         )
-        self.color_phase %= 4.0
+
+        # Palette length = 5
+        self.color_phase %= 5.0
 
         i = int(self.color_phase)
         t = self.color_phase - i
-        palette = [deep_purple, warm_orange, soft_green, deep_red, deep_purple]
+
+        palette = [
+            deep_purple,
+            warm_orange,
+            soft_green,
+            sky_blue,
+            brown_red,
+            deep_purple
+        ]
+
         orb_color = lerp_color(palette[i], palette[i + 1], t)
+
 
         painter.setPen(Qt.PenStyle.NoPen)
         grad = QRadialGradient(center, radius * (1.0 + self.glow_pump * 0.15))
@@ -285,35 +298,47 @@ class AudioVisualizer(QWidget):
         painter.drawEllipse(center, radius, radius)
 
         # =========================
-        # SPIKES
+        # SPIKES (CALMED / SUPPORTIVE)
         # =========================
-        spike_scale = 1.0 - bloom * 0.55 + self.drop_flash * 0.6
+        spike_scale = 0.85 - bloom * 0.55 + self.drop_flash * 0.4
 
         if self.rotation_freeze <= 0.0:
-            self.rotation += 0.002 + self.kick_energy * 0.015
+            self.rotation += 0.002 + self.kick_energy * 0.012
 
         slices = 96
         for i in range(slices):
             angle = (i / slices) * 2 * math.pi + self.rotation
             band = self.fft_smooth[int(i / slices * len(self.fft_smooth))]
 
-            kick_spike = self.kick_energy * 42
-            piano_spike = band * 12 + self.piano_energy * 26
+            # Reduced sensitivity
+            kick_spike  = self.kick_energy * 18
+            piano_spike = band * 9 + self.piano_energy * 14
+
             spike = (kick_spike + piano_spike) * spike_scale
 
-            inner = radius + 6
+            # Soft ceiling (prevents harsh jumps)
+            spike = spike ** 0.75
+            spike = min(spike, 54)
+
+            inner = radius + 4
             outer = inner + spike
 
-            alpha = int(90 + self.kick_energy * 80 + self.drop_flash * 80)
+            # Softer alpha so orb remains focus
+            alpha = int(70 + self.kick_energy * 60 + self.drop_flash * 60)
             pen = QPen(QColor(200, 220, 255, alpha))
             pen.setWidth(2)
             painter.setPen(pen)
 
-            p1 = QPointF(center.x() + math.cos(angle) * inner,
-                         center.y() + math.sin(angle) * inner)
-            p2 = QPointF(center.x() + math.cos(angle) * outer,
-                         center.y() + math.sin(angle) * outer)
+            p1 = QPointF(
+                center.x() + math.cos(angle) * inner,
+                center.y() + math.sin(angle) * inner
+            )
+            p2 = QPointF(
+                center.x() + math.cos(angle) * outer,
+                center.y() + math.sin(angle) * outer
+            )
             painter.drawLine(p1, p2)
+
 
 
 # =========================
