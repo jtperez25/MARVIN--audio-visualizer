@@ -99,19 +99,14 @@ BLACKHOLE INSTALLATION & SETUP (macOS)
 
 2. Install BlackHole following the installer instructions.
 
-3. Open macOS System Settings:
-   - Go to Sound
-   - Under Output, select:
-     "BlackHole 2ch"
-
-4. (Optional but recommended)
-   - If you want to hear audio while visualizing:
-     - Create a Multi-Output Device in Audio MIDI Setup
-     - Include:
-       - BlackHole 2ch
-       - Your speakers or headphones
-     - Select the Multi-Output Device as system output
-
+3. Open Audio MIDI Setup:
+   - Create a Multi-Output Device in Audio MIDI Setup (+)
+   - Include:
+      - BlackHole 2ch
+      - Your speakers or headphones
+4. Open macOS System Settings:
+   - Open Sound
+   - Select the Multi-Output Device as system output
 5. Ensure audio is playing through the system before launching MARVIN.
 
 VERIFYING BLACKHOLE AUDIO INPUT (TERMINAL TEST)
