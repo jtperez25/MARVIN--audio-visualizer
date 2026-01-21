@@ -52,9 +52,12 @@ COLOR SYSTEM
 - Palette includes:
   - Deep purple
   - Warm orange
-  - Soft green
+  - Moss green
   - Brownish red
-  - Subtle sky blue accents
+  - Periwinkle Blue
+  - Deep Purple
+  - Golden Yellow
+  - Cloud White
 - Transitions are smooth and emotionally driven
 
 
