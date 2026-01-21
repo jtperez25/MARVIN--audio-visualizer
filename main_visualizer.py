@@ -225,20 +225,20 @@ class AudioVisualizer(QWidget):
         # =========================
         # ORB SIZE (DROP IMPACT)
         # =========================
-        base_radius = min(w, h) * 0.22
-        pitch_energy = self.pitch_smooth ** 1.35
-        emotional = self.vocal_sustain ** 1.4
+        base_radius = min(w, h) * 0.24
+        pitch_energy = self.pitch_smooth ** 1.48
+        emotional = self.vocal_sustain ** 1.6
         bloom = self.chorus_level ** 1.4
 
         drop_punch = self.drop_flash ** 1.8
 
         target_radius = (
             base_radius +
-            pitch_energy * 150 +
-            self.vocal_env * 80 +
-            emotional * 100 +
-            bloom * 120 +
-            drop_punch * 220
+            pitch_energy * 180 +      # ⬆️ Emphasize vocal expression
+            self.vocal_env * 100 +    # ⬆️ Boost vocal presence
+            emotional * 110 +
+            bloom * 100 +
+            drop_punch * 160          # ⬇️ Drops still impactful, not dominant
         )
 
         self.orb_velocity = lerp(
@@ -311,14 +311,14 @@ class AudioVisualizer(QWidget):
             band = self.fft_smooth[int(i / slices * len(self.fft_smooth))]
 
             # Reduced sensitivity
-            kick_spike  = self.kick_energy * 18
-            piano_spike = band * 9 + self.piano_energy * 14
+            kick_spike  = self.kick_energy * 36
+            piano_spike = band * 9 + self.piano_energy * 18
 
             spike = (kick_spike + piano_spike) * spike_scale
 
             # Soft ceiling (prevents harsh jumps)
-            spike = spike ** 0.75
-            spike = min(spike, 54)
+            spike = spike ** 0.79
+            spike = min(spike, 56)
 
             inner = radius + 4
             outer = inner + spike
