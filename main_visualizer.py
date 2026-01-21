@@ -53,16 +53,16 @@ class AudioVisualizer(QWidget):
         self.pitch_smooth = 0.0
         self.vocal_confidence = 0.0
 
-        self.vocal_attack = 0.18
-        self.vocal_release = 0.06
+        self.vocal_attack = 0.20
+        self.vocal_release = 0.04
 
         # =========================
         # ORB
         # =========================
         self.orb_radius = 0.0
         self.orb_velocity = 0.0
-        self.orb_response = 0.14
-        self.orb_damping = 0.90
+        self.orb_response = 0.12
+        self.orb_damping = 0.94
 
         # =========================
         # SIDECHAIN
@@ -76,8 +76,8 @@ class AudioVisualizer(QWidget):
         self.kick_energy = 0.0
         self.piano_energy = 0.0
 
-        self.kick_decay = 0.78
-        self.piano_decay = 0.90
+        self.kick_decay = 0.95    # Was 0.78 (falls faster)
+        self.piano_decay = 0.85   # Was 0.90 (falls faster)
 
         # =========================
         # CHORUS
@@ -267,7 +267,7 @@ class AudioVisualizer(QWidget):
         brown_red   = QColor(160, 60, 45, 220)   # 🔥 brownish red
 
         self.color_phase += (
-            pitch_energy * 0.028 +
+            pitch_energy * 0.035 +
             emotional * 0.035 +
             bloom * 0.05
         )
@@ -305,40 +305,60 @@ class AudioVisualizer(QWidget):
         if self.rotation_freeze <= 0.0:
             self.rotation += 0.002 + self.kick_energy * 0.012
 
-        slices = 96
+        slices = 360
         for i in range(slices):
             angle = (i / slices) * 2 * math.pi + self.rotation
             band = self.fft_smooth[int(i / slices * len(self.fft_smooth))]
 
-            # Reduced sensitivity
-            kick_spike  = self.kick_energy * 36
-            piano_spike = band * 9 + self.piano_energy * 18
-
-            spike = (kick_spike + piano_spike) * spike_scale
-
-            # Soft ceiling (prevents harsh jumps)
-            spike = spike ** 0.79
-            spike = min(spike, 56)
-
-            inner = radius + 4
-            outer = inner + spike
-
-            # Softer alpha so orb remains focus
-            alpha = int(70 + self.kick_energy * 60 + self.drop_flash * 60)
-            pen = QPen(QColor(200, 220, 255, alpha))
-            pen.setWidth(2)
-            painter.setPen(pen)
-
-            p1 = QPointF(
-                center.x() + math.cos(angle) * inner,
-                center.y() + math.sin(angle) * inner
+            # Layered spikes: piano (inner) → kick (outer)
+            piano_spike = band * 1 + self.piano_energy * 12
+            kick_spike  = self.kick_energy * 48
+            
+            # Draw piano spike first (inner layer)
+            piano_height = piano_spike * spike_scale
+            piano_height = piano_height ** 0.79
+            piano_height = min(piano_height, 40)
+            
+            piano_inner = radius + 4
+            piano_outer = piano_inner + piano_height
+            
+            piano_alpha = int(50 + self.piano_energy * 40)
+            piano_pen = QPen(QColor(180, 200, 220, piano_alpha))
+            piano_pen.setWidth(1)
+            painter.setPen(piano_pen)
+            
+            p1_piano = QPointF(
+                center.x() + math.cos(angle) * piano_inner,
+                center.y() + math.sin(angle) * piano_inner
             )
-            p2 = QPointF(
-                center.x() + math.cos(angle) * outer,
-                center.y() + math.sin(angle) * outer
+            p2_piano = QPointF(
+                center.x() + math.cos(angle) * piano_outer,
+                center.y() + math.sin(angle) * piano_outer
             )
-            painter.drawLine(p1, p2)
+            painter.drawLine(p1_piano, p2_piano)
 
+            # Draw kick spike on top (outer layer)
+            kick_height = kick_spike * spike_scale
+            kick_height = kick_height ** 0.79
+            kick_height = min(kick_height, 56)
+            
+            kick_inner = piano_outer  # Starts where piano ends
+            kick_outer = kick_inner + kick_height
+            
+            kick_alpha = int(70 + self.kick_energy * 60)
+            kick_pen = QPen(QColor(200, 220, 255, kick_alpha))
+            kick_pen.setWidth(2)
+            painter.setPen(kick_pen)
+            
+            p1_kick = QPointF(
+                center.x() + math.cos(angle) * kick_inner,
+                center.y() + math.sin(angle) * kick_inner
+            )
+            p2_kick = QPointF(
+                center.x() + math.cos(angle) * kick_outer,
+                center.y() + math.sin(angle) * kick_outer
+            )
+            painter.drawLine(p1_kick, p2_kick)
 
 
 # =========================
