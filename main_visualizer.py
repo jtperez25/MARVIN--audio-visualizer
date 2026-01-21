@@ -262,9 +262,12 @@ class AudioVisualizer(QWidget):
         # =========================
         deep_purple = QColor(140, 60, 255, 220)
         warm_orange = QColor(255, 150, 80, 220)
-        soft_green  = QColor(120, 200, 140, 220)
-        sky_blue    = QColor(135, 206, 235, 220)
-        brown_red   = QColor(160, 60, 45, 220)   # 🔥 brownish red
+        moss_green = QColor(80, 200, 120, 220)
+        periwinkle_blue = QColor(100, 150, 255, 220)
+        brown_red   = QColor(160, 60, 45, 220)
+        golden_yellow = QColor(255, 220, 100, 220)
+        cloud_white = QColor(255, 255, 255, 200)
+
 
         self.color_phase += (
             pitch_energy * 0.035 +
@@ -281,10 +284,12 @@ class AudioVisualizer(QWidget):
         palette = [
             deep_purple,
             warm_orange,
-            soft_green,
-            sky_blue,
+            moss_green,
+            periwinkle_blue,
             brown_red,
-            deep_purple
+            deep_purple,
+            golden_yellow,
+            cloud_white
         ]
 
         orb_color = lerp_color(palette[i], palette[i + 1], t)
