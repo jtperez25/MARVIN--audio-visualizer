@@ -59,6 +59,7 @@ COLOR SYSTEM
   - Golden Yellow
   - Cloud White
 - Transitions are smooth and emotionally driven
+- If on macOS, recommend using with dark mode
 
 
 TECH STACK
