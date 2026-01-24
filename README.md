@@ -203,8 +203,8 @@ CURRENT STATUS
 - Beat-aware frequency spikes
 - Sidechain-inspired breathing motion
 - Drop and intensity detection
+- Customizable genre presets that adjust MARVIN's behavior
 - Downloadable app packaging planned
-
 
 LICENSE
 -------
